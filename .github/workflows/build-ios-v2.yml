@@ -57,6 +57,7 @@ jobs:
         run: |
           set -uo pipefail
 
+          set +e
           xcodebuild \
             -workspace ios/Runner.xcworkspace \
             -scheme Runner \
@@ -70,10 +71,11 @@ jobs:
             build > /tmp/easybac-build.log 2>&1
 
           RESULT=$?
+          set -e
 
           echo "========== BUILD ERRORS =========="
           grep -n -E \
-            'error:|Error:|Exception|PhaseScriptExecution|BUILD FAILED|Target kernel_snapshot_program failed' \
+            'error:|Error:|Exception|PhaseScriptExecution|BUILD FAILED|Target kernel_snapshot_program failed|No such file' \
             /tmp/easybac-build.log | tail -60 || true
 
           echo "========== LAST 50 LINES =========="
@@ -88,6 +90,7 @@ jobs:
           name: EasyBAC-V2-Build-Log
           path: /tmp/easybac-build.log
           if-no-files-found: ignore
+          retention-days: 7
 
       - name: Package unsigned IPA
         shell: bash

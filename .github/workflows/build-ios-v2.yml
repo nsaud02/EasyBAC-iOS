@@ -7,7 +7,7 @@ on:
 jobs:
   build:
     runs-on: macos-15
-    timeout-minutes: 45
+    timeout-minutes: 60
 
     steps:
       - name: Checkout repository
@@ -20,7 +20,7 @@ jobs:
 
           unzip -q EasyBAC-V2-iOS-Source.zip -d /tmp/easybac-v2
 
-          PUBSPEC="$(find /tmp/easybac-v2 -name pubspec.yaml -type f -print -quit)"
+          PUBSPEC="$(find /tmp/easybac-v2 -type f -name pubspec.yaml -print -quit)"
 
           if [ -z "$PUBSPEC" ]; then
             echo "::error::pubspec.yaml not found"
@@ -36,28 +36,61 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Generate iOS platform
+      - name: Generate iOS project
         run: flutter create . --platforms=ios
 
       - name: Install dependencies
         run: flutter pub get
 
-      - name: Build unsigned IPA
-        run: flutter build ios --release --no-codesign
+      - name: Generate Flutter iOS configuration
+        run: flutter build ios --release --config-only --no-codesign
 
-      - name: Package IPA for ESign
+      - name: Install CocoaPods
+        shell: bash
+        run: |
+          cd ios
+          pod install
+
+      - name: Build iOS without Apple signing
         shell: bash
         run: |
           set -euo pipefail
 
+          xcodebuild \
+            -workspace ios/Runner.xcworkspace \
+            -scheme Runner \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$GITHUB_WORKSPACE/build/ios/derived" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Package unsigned IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          APP="build/ios/derived/Build/Products/Release-iphoneos/Runner.app"
+
+          if [ ! -d "$APP" ]; then
+            echo "::error::Runner.app not found"
+            exit 1
+          fi
+
           mkdir -p Payload
-          cp -R build/ios/iphoneos/Runner.app Payload/
+          cp -R "$APP" Payload/Runner.app
 
           zip -qry EasyBAC-V2-Unsigned.ipa Payload
 
-      - name: Upload IPA
+          test -s EasyBAC-V2-Unsigned.ipa
+
+      - name: Upload IPA for ESign
         uses: actions/upload-artifact@v4
         with:
           name: EasyBAC-V2-iOS-IPA
           path: EasyBAC-V2-Unsigned.ipa
           if-no-files-found: error
+          retention-days: 7

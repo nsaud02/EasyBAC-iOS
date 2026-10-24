@@ -1,0 +1,63 @@
+
+name: Build EasyBAC iOS IPA
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract EasyBAC project
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          unzip -q easybac_ios.zip -d /tmp/easybac
+
+          PUBSPEC="$(find /tmp/easybac -name pubspec.yaml -type f -print -quit)"
+
+          if [ -z "$PUBSPEC" ]; then
+            echo "::error::pubspec.yaml not found in ZIP"
+            exit 1
+          fi
+
+          SOURCE="$(dirname "$PUBSPEC")"
+          rsync -a "$SOURCE/" "$GITHUB_WORKSPACE/"
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate iOS platform
+        run: flutter create . --platforms=ios
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build unsigned iOS app
+        run: flutter build ios --release --no-codesign
+
+      - name: Package IPA for ESign
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p Payload
+          cp -R build/ios/iphoneos/Runner.app Payload/
+
+          zip -qry EasyBAC-iOS-Unsigned.ipa Payload
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: EasyBAC-iOS-IPA
+          path: EasyBAC-iOS-Unsigned.ipa
+          if-no-files-found: error

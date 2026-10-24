@@ -48,13 +48,14 @@ jobs:
       - name: Install CocoaPods
         shell: bash
         run: |
+          set -euo pipefail
           cd ios
           pod install
 
       - name: Build iOS without Apple signing
         shell: bash
         run: |
-          set -euo pipefail
+          set -uo pipefail
 
           xcodebuild \
             -workspace ios/Runner.xcworkspace \
@@ -66,7 +67,27 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            build
+            build > /tmp/easybac-build.log 2>&1
+
+          RESULT=$?
+
+          echo "========== BUILD ERRORS =========="
+          grep -n -E \
+            'error:|Error:|Exception|PhaseScriptExecution|BUILD FAILED|Target kernel_snapshot_program failed' \
+            /tmp/easybac-build.log | tail -60 || true
+
+          echo "========== LAST 50 LINES =========="
+          tail -50 /tmp/easybac-build.log
+
+          exit "$RESULT"
+
+      - name: Upload Xcode build log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: EasyBAC-V2-Build-Log
+          path: /tmp/easybac-build.log
+          if-no-files-found: ignore
 
       - name: Package unsigned IPA
         shell: bash

@@ -1,0 +1,101 @@
+
+name: Build EasyBAC V8 iOS IPA
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ios:
+    runs-on: macos-15
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract V8 source
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ZIP="EasyBAC-V8-Luxury-Redesign-Source.zip"
+
+          test -f "$ZIP" || {
+            echo "::error::Missing $ZIP in repository root"
+            exit 1
+          }
+
+          mkdir -p /tmp/easybac-v8
+          unzip -q "$ZIP" -d /tmp/easybac-v8
+
+          PUBSPEC="$(find /tmp/easybac-v8 \
+            -type f -name pubspec.yaml -print -quit)"
+
+          test -n "$PUBSPEC" || {
+            echo "::error::pubspec.yaml missing"
+            exit 1
+          }
+
+          rsync -a \
+            "$(dirname "$PUBSPEC")/" \
+            "$GITHUB_WORKSPACE/"
+
+          test -f lib/main.dart
+          grep -q 'class GlassBottomNav' lib/main.dart
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate iOS project
+        run: flutter create . --platforms=ios
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Remove incompatible template test
+        run: rm -f test/widget_test.dart analysis_options.yaml
+
+      - name: Analyze Dart
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+
+      - name: Build unsigned iOS
+        run: flutter build ios --release --no-codesign
+
+      - name: Package IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          APP="build/ios/iphoneos/Runner.app"
+
+          test -d "$APP" || {
+            echo "::error::Runner.app missing"
+            exit 1
+          }
+
+          mkdir -p /tmp/easybac-ipa/Payload
+
+          cp -R "$APP" \
+            /tmp/easybac-ipa/Payload/Runner.app
+
+          (
+            cd /tmp/easybac-ipa
+            zip -qry \
+              "$GITHUB_WORKSPACE/EasyBAC-V8-Unsigned.ipa" \
+              Payload
+          )
+
+          test -s EasyBAC-V8-Unsigned.ipa
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: EasyBAC-V8-iOS-IPA
+          path: EasyBAC-V8-Unsigned.ipa
+          if-no-files-found: error

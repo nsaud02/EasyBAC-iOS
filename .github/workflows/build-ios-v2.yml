@@ -13,12 +13,20 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Extract EasyBAC V2
+      - name: Extract Fixed EasyBAC V2
         shell: bash
         run: |
           set -euo pipefail
 
-          unzip -q EasyBAC-V2-iOS-Source.zip -d /tmp/easybac-v2
+          ZIP="EasyBAC-V2-iOS-Source-Fixed.zip"
+
+          if [ ! -f "$ZIP" ]; then
+            echo "::error::Fixed EasyBAC ZIP not found"
+            exit 1
+          fi
+
+          mkdir -p /tmp/easybac-v2
+          unzip -q "$ZIP" -d /tmp/easybac-v2
 
           PUBSPEC="$(find /tmp/easybac-v2 -type f -name pubspec.yaml -print -quit)"
 
@@ -56,8 +64,8 @@ jobs:
         shell: bash
         run: |
           set -uo pipefail
-
           set +e
+
           xcodebuild \
             -workspace ios/Runner.xcworkspace \
             -scheme Runner \
@@ -108,7 +116,6 @@ jobs:
           cp -R "$APP" Payload/Runner.app
 
           zip -qry EasyBAC-V2-Unsigned.ipa Payload
-
           test -s EasyBAC-V2-Unsigned.ipa
 
       - name: Upload IPA for ESign

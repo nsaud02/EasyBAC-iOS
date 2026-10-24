@@ -9,36 +9,66 @@ permissions:
 
 jobs:
   ios:
+    name: Build iOS Unsigned IPA
     runs-on: macos-15
-    timeout-minutes: 50
+    timeout-minutes: 60
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Extract EasyBAC V4 source
+      - name: Extract corrected EasyBAC V4 source
         shell: bash
         run: |
           set -euo pipefail
 
-          ZIP="EasyBAC-V4-Glass-Source.zip"
+          ZIP="EasyBAC-V4-Glass-Source-Fixed.zip"
 
-          test -f "$ZIP" || {
-            echo "::error::ZIP file not found: $ZIP"
+          if [ ! -f "$ZIP" ]; then
+            echo "::error::Missing source file: $ZIP"
             exit 1
-          }
+          fi
 
-          mkdir -p /tmp/easybac-v4
-          unzip -q "$ZIP" -d /tmp/easybac-v4
+          mkdir -p /tmp/easybac-v4-fixed
 
-          PUBSPEC="$(find /tmp/easybac-v4 -type f -name pubspec.yaml -print -quit)"
+          unzip -q "$ZIP" -d /tmp/easybac-v4-fixed
 
-          test -n "$PUBSPEC" || {
+          PUBSPEC="$(find /tmp/easybac-v4-fixed \
+            -type f -name pubspec.yaml -print -quit)"
+
+          if [ -z "$PUBSPEC" ]; then
             echo "::error::pubspec.yaml not found"
             exit 1
-          }
+          fi
 
-          rsync -a "$(dirname "$PUBSPEC")/" "$GITHUB_WORKSPACE/"
+          SOURCE="$(dirname "$PUBSPEC")"
+
+          test -f "$SOURCE/lib/main.dart"
+
+          rsync -a "$SOURCE/" "$GITHUB_WORKSPACE/"
+
+          echo "Corrected V4 source extracted"
+
+      - name: Verify corrected source
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          FILE="lib/main.dart"
+
+          test -f "$FILE"
+
+          if grep -nF 'dark?.30:.10' "$FILE"; then
+            echo "::error::Old V4 syntax error detected"
+            exit 1
+          fi
+
+          if ! grep -qF 'alpha: dark ? 0.30 : 0.10' "$FILE"; then
+            echo "::error::Expected V4 fix not found"
+            exit 1
+          fi
+
+          echo "Corrected EasyBAC V4 source confirmed"
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
@@ -46,23 +76,48 @@ jobs:
           channel: stable
           cache: true
 
+      - name: Show Flutter version
+        run: flutter --version
+
       - name: Generate iOS project
         run: flutter create . --platforms=ios
-
-      - name: Install dependencies
-        run: flutter pub get
 
       - name: Remove incompatible template files
         shell: bash
         run: |
+          set -euo pipefail
+
           rm -f test/widget_test.dart
           rm -f analysis_options.yaml
 
-      - name: Analyze Flutter code
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Analyze Flutter source
         run: flutter analyze --no-fatal-infos --no-fatal-warnings
 
       - name: Build unsigned iOS
-        run: flutter build ios --release --no-codesign
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          flutter build ios \
+            --release \
+            --no-codesign
+
+      - name: Verify iOS application
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          APP="build/ios/iphoneos/Runner.app"
+
+          if [ ! -d "$APP" ]; then
+            echo "::error::Runner.app not found"
+            exit 1
+          fi
+
+          echo "iOS application build completed"
 
       - name: Package IPA for ESign
         shell: bash
@@ -71,19 +126,26 @@ jobs:
 
           APP="build/ios/iphoneos/Runner.app"
 
-          test -d "$APP" || {
-            echo "::error::Runner.app not found"
-            exit 1
-          }
+          mkdir -p /tmp/easybac-v4-ipa/Payload
 
-          mkdir -p Payload
-          cp -R "$APP" Payload/Runner.app
+          cp -R "$APP" \
+            /tmp/easybac-v4-ipa/Payload/Runner.app
 
-          zip -qry EasyBAC-V4-Unsigned.ipa Payload
+          cd /tmp/easybac-v4-ipa
 
-      - name: Upload IPA
+          zip -qry \
+            "$GITHUB_WORKSPACE/EasyBAC-V4-Unsigned.ipa" \
+            Payload
+
+          test -s \
+            "$GITHUB_WORKSPACE/EasyBAC-V4-Unsigned.ipa"
+
+          echo "IPA package created successfully"
+
+      - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:
           name: EasyBAC-V4-iOS-IPA
           path: EasyBAC-V4-Unsigned.ipa
           if-no-files-found: error
+          retention-days: 7

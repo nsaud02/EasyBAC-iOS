@@ -1,0 +1,77 @@
+
+name: Build EasyBAC V3 iOS IPA
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ios:
+    runs-on: macos-15
+    timeout-minutes: 50
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract V3 source (if uploaded as ZIP)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ ! -f pubspec.yaml ]; then
+            ZIP="EasyBAC-V3-Source.zip"
+
+            test -f "$ZIP" || {
+              echo "::error::Upload $ZIP or extracted project files"
+              exit 1
+            }
+
+            mkdir -p /tmp/easybac-v3
+            unzip -q "$ZIP" -d /tmp/easybac-v3
+
+            PUBSPEC="$(find /tmp/easybac-v3 -type f -name pubspec.yaml -print -quit)"
+
+            test -n "$PUBSPEC" || {
+              echo "::error::pubspec.yaml missing"
+              exit 1
+            }
+
+            rsync -a "$(dirname "$PUBSPEC")/" "$GITHUB_WORKSPACE/"
+          fi
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate iOS project
+        run: flutter create . --platforms=ios
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Static analysis
+        run: flutter analyze --no-fatal-infos
+
+      - name: Build unsigned iOS
+        run: flutter build ios --release --no-codesign
+
+      - name: Package for ESign
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -d build/ios/iphoneos/Runner.app
+
+          mkdir -p Payload
+          cp -R build/ios/iphoneos/Runner.app Payload/
+
+          zip -qry EasyBAC-V3-Unsigned.ipa Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: EasyBAC-V3-iOS-IPA
+          path: EasyBAC-V3-Unsigned.ipa
+          if-no-files-found: error

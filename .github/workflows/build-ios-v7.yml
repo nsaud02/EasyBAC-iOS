@@ -1,0 +1,79 @@
+
+name: Build EasyBAC V7 Redesign iOS IPA
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ios:
+    runs-on: macos-15
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract V7 source
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ZIP="EasyBAC-V7-Redesign-Source.zip"
+
+          test -f "$ZIP" || {
+            echo "::error::Missing $ZIP"
+            exit 1
+          }
+
+          mkdir -p /tmp/easybac-v7
+          unzip -q "$ZIP" -d /tmp/easybac-v7
+
+          PUBSPEC="$(find /tmp/easybac-v7 -name pubspec.yaml -print -quit)"
+          test -n "$PUBSPEC"
+
+          rsync -a "$(dirname "$PUBSPEC")/" "$GITHUB_WORKSPACE/"
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate iOS project
+        run: flutter create . --platforms=ios
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Remove incompatible Flutter template files
+        run: |
+          rm -f test/widget_test.dart
+          rm -f analysis_options.yaml
+
+      - name: Analyze
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+
+      - name: Build unsigned iOS
+        run: flutter build ios --release --no-codesign
+
+      - name: Package IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -d build/ios/iphoneos/Runner.app
+
+          mkdir -p Payload
+
+          cp -R build/ios/iphoneos/Runner.app Payload/Runner.app
+
+          zip -qry EasyBAC-V7-Unsigned.ipa Payload
+
+          test -s EasyBAC-V7-Unsigned.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: EasyBAC-V7-iOS-IPA
+          path: EasyBAC-V7-Unsigned.ipa
+          if-no-files-found: error

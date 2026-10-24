@@ -1,0 +1,89 @@
+
+name: Build EasyBAC V4 iOS IPA
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ios:
+    runs-on: macos-15
+    timeout-minutes: 50
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract EasyBAC V4 source
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ZIP="EasyBAC-V4-Glass-Source.zip"
+
+          test -f "$ZIP" || {
+            echo "::error::ZIP file not found: $ZIP"
+            exit 1
+          }
+
+          mkdir -p /tmp/easybac-v4
+          unzip -q "$ZIP" -d /tmp/easybac-v4
+
+          PUBSPEC="$(find /tmp/easybac-v4 -type f -name pubspec.yaml -print -quit)"
+
+          test -n "$PUBSPEC" || {
+            echo "::error::pubspec.yaml not found"
+            exit 1
+          }
+
+          rsync -a "$(dirname "$PUBSPEC")/" "$GITHUB_WORKSPACE/"
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate iOS project
+        run: flutter create . --platforms=ios
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Remove incompatible template files
+        shell: bash
+        run: |
+          rm -f test/widget_test.dart
+          rm -f analysis_options.yaml
+
+      - name: Analyze Flutter code
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+
+      - name: Build unsigned iOS
+        run: flutter build ios --release --no-codesign
+
+      - name: Package IPA for ESign
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          APP="build/ios/iphoneos/Runner.app"
+
+          test -d "$APP" || {
+            echo "::error::Runner.app not found"
+            exit 1
+          }
+
+          mkdir -p Payload
+          cp -R "$APP" Payload/Runner.app
+
+          zip -qry EasyBAC-V4-Unsigned.ipa Payload
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: EasyBAC-V4-iOS-IPA
+          path: EasyBAC-V4-Unsigned.ipa
+          if-no-files-found: error
